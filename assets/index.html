@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-watcher</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface:     #fcfcfb;
+  --ink:         #0b0b0b;
+  --ink-2:       #52514e;
+  --muted:       #898781;
+  --grid:        #e1e0d9;
+  --baseline:    #c3c2b7;
+  --border:      rgba(11,11,11,0.10);
+  --s1: #2a78d6;  /* blue */
+  --s2: #1baf7a;  /* aqua */
+  --s3: #eda100;  /* yellow */
+  --s4: #008300;  /* green */
+  --s5: #4a3aa7;  /* violet */
+  --s6: #e34948;  /* red */
+  --s7: #e87ba4;  /* magenta */
+  --s8: #eb6834;  /* orange */
+  --loss: #e34948;
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+  --good-text: #006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --muted:       #898781;
+    --grid:        #2c2c2a;
+    --baseline:    #383835;
+    --border:      rgba(255,255,255,0.10);
+    --s1: #3987e5;
+    --s2: #199e70;
+    --s3: #c98500;
+    --s4: #008300;
+    --s5: #9085e9;
+    --s6: #e66767;
+    --s7: #d55181;
+    --s8: #d95926;
+    --loss: #e66767;
+    --good-text: #0ca30c;
+  }
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 20px 16px 48px;
+}
+.wrap { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+header h1 { font-size: 18px; font-weight: 650; }
+#updated { color: var(--muted); font-size: 12px; }
+#updated.stale { color: var(--serious); }
+
+.banner {
+  border-radius: 10px; padding: 14px 18px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 16px; font-weight: 600;
+  display: flex; align-items: center; gap: 10px;
+}
+.banner .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.banner.up       .dot { background: var(--good); }
+.banner.degraded .dot { background: var(--warning); }
+.banner.down     .dot { background: var(--critical); }
+.banner.degraded { border-color: var(--warning); }
+.banner.down     { border-color: var(--critical); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.card h3 { font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+.card .state { display: flex; align-items: center; gap: 7px; margin-top: 6px; font-weight: 650; font-size: 15px; }
+.state .dot { width: 9px; height: 9px; border-radius: 50%; }
+.state.up       { color: var(--good-text); }  .state.up .dot { background: var(--good); }
+.state.degraded { color: var(--ink); }        .state.degraded .dot { background: var(--warning); }
+.state.down     { color: var(--critical); }   .state.down .dot { background: var(--critical); }
+.card .meta { color: var(--ink-2); font-size: 12px; margin-top: 5px; }
+.card .tgt { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-top: 3px; }
+.card .tgt .n { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .tgt .v { color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.card .tgt.bad .v { color: var(--critical); font-weight: 600; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.tile .k { font-size: 12px; color: var(--ink-2); }
+.tile .v { font-size: 22px; font-weight: 650; margin-top: 2px; }
+.tile .v small { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.tile .v.bad { color: var(--critical); }
+.tile .v.good { color: var(--good-text); }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.panel h2 { font-size: 13px; font-weight: 650; color: var(--ink-2); }
+.controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.controls .spacer { flex: 1; }
+.rbtn {
+  border: 1px solid var(--border); background: none; color: var(--ink-2);
+  font: 12px system-ui, sans-serif; border-radius: 7px; padding: 4px 10px; cursor: pointer;
+}
+.rbtn.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.legend { display: flex; gap: 4px 12px; flex-wrap: wrap; margin-top: 8px; }
+.lg { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2);
+      cursor: pointer; border: 0; background: none; padding: 2px 0; font-family: inherit; }
+.lg .chip { width: 10px; height: 10px; border-radius: 3px; }
+.lg.off { opacity: .35; }
+.chartwrap { position: relative; margin-top: 8px; }
+canvas { display: block; width: 100%; }
+#latency { height: 240px; }
+#losschart { height: 110px; }
+.tooltip {
+  position: absolute; pointer-events: none; display: none; z-index: 5;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12px; min-width: 130px;
+}
+.tooltip .t { color: var(--muted); margin-bottom: 4px; }
+.tooltip .row { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.tooltip .row .l { display: flex; align-items: center; gap: 5px; color: var(--ink-2); }
+.tooltip .chip { width: 8px; height: 8px; border-radius: 2px; }
+.tooltip .v { font-variant-numeric: tabular-nums; }
+.crosshair { position: absolute; top: 0; width: 1px; background: var(--baseline); display: none; pointer-events: none; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+td { padding: 6px 8px 6px 0; border-top: 1px solid var(--grid); vertical-align: top; }
+tr:first-child td { border-top: 0; }
+td.when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; width: 1%; padding-right: 14px; }
+.badge {
+  display: inline-block; font-size: 11px; font-weight: 650; border-radius: 5px;
+  padding: 1px 7px; margin-right: 8px; white-space: nowrap;
+}
+.badge.down, .badge.still_down { background: var(--critical); color: #fff; }
+.badge.up       { background: var(--good); color: #fff; }
+.badge.degraded { background: var(--warning); color: #201a00; }
+.badge.degraded_end { background: var(--grid); color: var(--ink-2); }
+.empty { color: var(--muted); padding: 18px 0; text-align: center; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>pi-watcher</h1>
+    <span id="updated">loading…</span>
+  </header>
+
+  <div class="banner up" id="banner"><span class="dot"></span><span id="verdict">Waiting for first probe cycle…</span></div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="panel">
+    <h2>Latency</h2>
+    <div class="controls" id="ranges"></div>
+    <div class="legend" id="legend"></div>
+    <div class="chartwrap">
+      <canvas id="latency"></canvas>
+      <div class="crosshair" id="cross1"></div>
+      <div class="tooltip" id="tip1"></div>
+    </div>
+    <h2 style="margin-top:14px">Packet loss — internet layer</h2>
+    <div class="chartwrap">
+      <canvas id="losschart"></canvas>
+      <div class="crosshair" id="cross2"></div>
+      <div class="tooltip" id="tip2"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Events</h2>
+    <div id="events"><div class="empty">No events yet — that’s good news.</div></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const SERIES_VARS = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+
+const RANGES = [ ["6h",6], ["24h",24], ["7d",168], ["30d",720] ];
+let rangeHours = 24;
+let history = null;          // /api/history payload
+let hidden = new Set();      // hidden series names
+let colorOf = {};            // target name -> css var (fixed on first sight, never re-cycled)
+let colorSeq = 0;
+
+function fmtDur(s) {
+  if (s == null) return "";
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s/60) + "m " + String(s%60).padStart(2,"0") + "s";
+  if (s < 86400) return Math.floor(s/3600) + "h " + String(Math.floor(s%3600/60)).padStart(2,"0") + "m";
+  return Math.floor(s/86400) + "d " + Math.floor(s%86400/3600) + "h";
+}
+function fmtTime(ts, longRange) {
+  const d = new Date(ts*1000);
+  return longRange
+    ? d.toLocaleDateString([], {month:"short", day:"numeric"}) + " " + d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})
+    : d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+}
+function fmtMs(v) { return v == null ? "—" : (v >= 100 ? Math.round(v) : v.toFixed(1)) + " ms"; }
+
+/* ---------- status ---------- */
+let lastSnap = null;
+async function loadStatus() {
+  try {
+    const snap = await (await fetch("api/status")).json();
+    if (!snap) return;
+    lastSnap = snap;
+    renderTiles();
+    const age = Math.floor(Date.now()/1000 - snap.updated);
+    const upd = $("updated");
+    upd.textContent = "updated " + (age < 5 ? "just now" : fmtDur(age) + " ago");
+    upd.classList.toggle("stale", age > snap.interval_secs * 3);
+
+    const banner = $("banner");
+    banner.className = "banner " + snap.verdict_status;
+    $("verdict").textContent = snap.verdict;
+
+    $("cards").innerHTML = snap.layers.map(l => {
+      const st = l.status;
+      const word = st === "up" ? "UP" : st === "down" ? "DOWN" : "DEGRADED";
+      const meta = [
+        l.latency_ms != null ? fmtMs(l.latency_ms) + " median" : null,
+        l.loss_pct != null ? l.loss_pct.toFixed(0) + "% loss" : null,
+      ].filter(Boolean).join(" · ");
+      const since = st !== "up" ? `<div class="meta">since ${fmtTime(l.since, rangeHours > 48)}</div>` : "";
+      const tgts = l.targets.map(t =>
+        `<div class="tgt ${t.up ? "" : "bad"}"><span class="n">${t.name}</span>` +
+        `<span class="v">${t.up ? fmtMs(t.last_ms) : "down"}</span></div>`).join("");
+      return `<div class="card"><h3>${l.label}</h3>` +
+        `<div class="state ${st}"><span class="dot"></span>${word}</div>` +
+        `<div class="meta">${meta || "&nbsp;"}</div>${since}${tgts}</div>`;
+    }).join("");
+  } catch (e) { $("updated").textContent = "status fetch failed"; $("updated").classList.add("stale"); }
+}
+
+/* ---------- stats tiles (configurable via [[tiles]] in config.toml) ---------- */
+let tileSpecs = null;
+async function loadStats() {
+  try {
+    tileSpecs = (await (await fetch("api/stats")).json()).tiles;
+    renderTiles();
+  } catch (e) {}
+}
+function snapTarget(name) {
+  if (!lastSnap) return null;
+  for (const l of lastSnap.layers)
+    for (const t of l.targets) if (t.name === name) return t;
+  return null;
+}
+function renderTiles() {
+  if (!tileSpecs) return;
+  const pct = v => v == null ? "—" : v.toFixed(v >= 99.95 ? 2 : 1) + "<small>%</small>";
+  $("tiles").innerHTML = tileSpecs.map(t => {
+    if (t.kind === "target") {
+      const tg = snapTarget(t.target);
+      const v = tg == null ? "—" : tg.up ? fmtMs(tg.last_ms) : "DOWN";
+      return tile(t.label, v, tg == null ? "" : tg.up ? "good" : "bad");
+    }
+    if (t.kind === "uptime") return tile(t.label, pct(t.value));
+    if (t.kind === "outages") return tile(t.label, t.value ?? "—");
+    if (t.kind === "downtime") return tile(t.label, t.value ? fmtDur(t.value) : "0s");
+    return "";
+  }).join("");
+}
+function tile(k, v, cls) {
+  return `<div class="tile"><div class="k">${k}</div><div class="v${cls ? " " + cls : ""}">${v}</div></div>`;
+}
+
+/* ---------- history + charts ---------- */
+async function loadHistory() {
+  try {
+    history = await (await fetch("api/history?hours=" + rangeHours)).json();
+    for (const s of history.series) {
+      if (!(s.target in colorOf)) colorOf[s.target] = SERIES_VARS[colorSeq++ % SERIES_VARS.length];
+    }
+    renderLegend();
+    drawCharts();
+  } catch (e) {}
+}
+
+function renderLegend() {
+  $("legend").innerHTML = "";
+  for (const s of history.series) {
+    const b = document.createElement("button");
+    b.className = "lg" + (hidden.has(s.target) ? " off" : "");
+    b.innerHTML = `<span class="chip" style="background:${css(colorOf[s.target])}"></span>${s.target}`;
+    b.onclick = () => { hidden.has(s.target) ? hidden.delete(s.target) : hidden.add(s.target); renderLegend(); drawCharts(); };
+    $("legend").appendChild(b);
+  }
+}
+
+function renderRanges() {
+  $("ranges").innerHTML = "";
+  for (const [label, h] of RANGES) {
+    const b = document.createElement("button");
+    b.className = "rbtn" + (h === rangeHours ? " on" : "");
+    b.textContent = label;
+    b.onclick = () => { rangeHours = h; renderRanges(); loadHistory(); };
+    $("ranges").appendChild(b);
+  }
+}
+
+function sizeCanvas(cv) {
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(r.width * dpr);
+  cv.height = Math.round(r.height * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+const M = { l: 46, r: 12, t: 10, b: 22 };
+
+let latencyGeom = null, lossGeom = null;
+
+function drawCharts() {
+  if (!history) return;
+  drawLatency();
+  drawLoss();
+}
+
+function visibleSeries() { return history.series.filter(s => !hidden.has(s.target) && s.points.length); }
+
+function timeDomain() {
+  const now = Math.floor(Date.now()/1000);
+  // fresh install: don't squeeze 3 minutes of data into the edge of a 24h axis
+  let first = Infinity;
+  for (const s of history.series) if (s.points.length) first = Math.min(first, s.points[0][0]);
+  let t0 = Math.max(history.from, isFinite(first) ? first - history.bucket_secs : history.from);
+  if (now - t0 < history.bucket_secs * 4) t0 = now - history.bucket_secs * 4;
+  return [t0, now];
+}
+
+function drawLatency() {
+  const { ctx, w, h } = sizeCanvas($("latency"));
+  const [t0, t1] = timeDomain();
+  const series = visibleSeries();
+  const pw = w - M.l - M.r, ph = h - M.t - M.b;
+
+  // y-scale: clamp to 2x p95 so one 3-second spike doesn't flatten the story
+  const vals = [];
+  for (const s of series) for (const p of s.points) if (p[1] != null) vals.push(p[1]);
+  vals.sort((a, b) => a - b);
+  let ymax = 50;
+  if (vals.length) {
+    const p95 = vals[Math.floor(vals.length * 0.95)];
+    ymax = niceMax(Math.max(20, Math.min(vals[vals.length - 1], p95 * 2)));
+  }
+  const X = t => M.l + (t - t0) / (t1 - t0) * pw;
+  const Y = v => M.t + ph - Math.min(v, ymax) / ymax * ph;
+  latencyGeom = { X, Y, t0, t1, ymax, w, h };
+
+  ctx.clearRect(0, 0, w, h);
+  drawFrame(ctx, w, h, t0, t1, 4, v => (ymax >= 1000 ? (v/1000) + " s" : v + " ms"), ymax);
+
+  for (const s of series) {
+    strokeSeries(ctx, s.points, X, Y, history.bucket_secs * 2.5, css(colorOf[s.target]));
+  }
+}
+
+// Stroke a [t, value, ...] series, lifting the pen across nulls and time gaps.
+// A point with no neighbor to connect to is drawn as a dot instead of nothing.
+function strokeSeries(ctx, pts, X, Y, gapSecs, color) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  let run = 0, prevT = 0, lastXY = null;
+  const dots = [];
+  for (const p of pts) {
+    const t = p[0], v = p[1];
+    if (v == null) { if (run === 1) dots.push(lastXY); run = 0; continue; }
+    if (run > 0 && t - prevT > gapSecs) { if (run === 1) dots.push(lastXY); run = 0; }
+    const x = X(t), y = Y(v);
+    if (run === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    run++; prevT = t; lastXY = [x, y];
+  }
+  if (run === 1) dots.push(lastXY);
+  ctx.stroke();
+  for (const [x, y] of dots) {
+    ctx.beginPath();
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawLoss() {
+  const { ctx, w, h } = sizeCanvas($("losschart"));
+  const [t0, t1] = timeDomain();
+  const pw = w - M.l - M.r, ph = h - M.t - M.b;
+
+  // internet-layer loss: min across internet anchors per bucket (shared-path only)
+  const buckets = new Map();
+  for (const s of history.series) {
+    if (s.layer !== "internet") continue;
+    for (const [t, , loss] of s.points) {
+      buckets.set(t, buckets.has(t) ? Math.min(buckets.get(t), loss) : loss);
+    }
+  }
+  const pts = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
+  const ymax = niceMax(Math.max(10, ...pts.map(p => p[1])));
+  const X = t => M.l + (t - t0) / (t1 - t0) * pw;
+  const Y = v => M.t + ph - v / ymax * ph;
+  lossGeom = { X, Y, t0, t1, ymax, pts, w, h };
+
+  ctx.clearRect(0, 0, w, h);
+  drawFrame(ctx, w, h, t0, t1, 2, v => v + "%", ymax);
+
+  if (!pts.length) return;
+  const lossColor = css("--loss");
+  ctx.beginPath();
+  ctx.moveTo(X(pts[0][0]), Y(0));
+  for (const [t, v] of pts) ctx.lineTo(X(t), Y(v));
+  ctx.lineTo(X(pts[pts.length - 1][0]), Y(0));
+  ctx.closePath();
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = lossColor;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  strokeSeries(ctx, pts, X, Y, history.bucket_secs * 2.5, lossColor);
+}
+
+function drawFrame(ctx, w, h, t0, t1, yTicks, yFmt, ymax) {
+  const pw = w - M.l - M.r, ph = h - M.t - M.b;
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.fillStyle = css("--muted");
+  ctx.strokeStyle = css("--grid");
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = ymax / yTicks * i;
+    const y = M.t + ph - ph / yTicks * i;
+    ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(M.l + pw, y); ctx.stroke();
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(yFmt(Math.round(v * 10) / 10), M.l - 7, y);
+  }
+  const longRange = (t1 - t0) > 48 * 3600;
+  const n = Math.max(2, Math.floor(pw / 110));
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let i = 0; i <= n; i++) {
+    const t = t0 + (t1 - t0) / n * i;
+    ctx.fillText(fmtTime(t, longRange), M.l + pw / n * i, M.t + ph + 7);
+  }
+  ctx.strokeStyle = css("--baseline");
+  ctx.beginPath(); ctx.moveTo(M.l, M.t + ph); ctx.lineTo(M.l + pw, M.t + ph); ctx.stroke();
+}
+
+/* ---------- hover / tooltips ---------- */
+function hookHover(canvasId, crossId, tipId, isLatency) {
+  const cv = $(canvasId), cross = $(crossId), tip = $(tipId);
+  const wrap = cv.parentElement;
+  cv.addEventListener("mousemove", ev => {
+    const geom = isLatency ? latencyGeom : lossGeom;
+    if (!geom || !history) return;
+    const rect = cv.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    const t = geom.t0 + (x - M.l) / (rect.width - M.l - M.r) * (geom.t1 - geom.t0);
+    const bucket = Math.round(t / history.bucket_secs) * history.bucket_secs;
+    const bx = geom.X(bucket);
+    if (bx < M.l - 2 || bx > rect.width - M.r + 2) { cross.style.display = tip.style.display = "none"; return; }
+
+    let rows = "";
+    if (isLatency) {
+      const entries = [];
+      for (const s of visibleSeries()) {
+        const p = s.points.find(p => p[0] === bucket);
+        if (p) entries.push([s.target, p[1], p[2]]);
+      }
+      if (!entries.length) { cross.style.display = tip.style.display = "none"; return; }
+      entries.sort((a, b) => (b[1] ?? -1) - (a[1] ?? -1));
+      rows = entries.map(([n, ms, loss]) =>
+        `<div class="row"><span class="l"><span class="chip" style="background:${css(colorOf[n])}"></span>${n}</span>` +
+        `<span class="v">${ms == null ? "lost" : fmtMs(ms)}${loss > 0 ? " · " + loss.toFixed(0) + "%" : ""}</span></div>`).join("");
+    } else {
+      const p = lossGeom.pts.find(p => p[0] === bucket);
+      if (!p) { cross.style.display = tip.style.display = "none"; return; }
+      rows = `<div class="row"><span class="l">loss</span><span class="v">${p[1].toFixed(1)}%</span></div>`;
+    }
+    tip.innerHTML = `<div class="t">${fmtTime(bucket, geom.t1 - geom.t0 > 48 * 3600)}</div>` + rows;
+    tip.style.display = "block";
+    cross.style.display = "block";
+    cross.style.left = bx + "px";
+    cross.style.height = rect.height - M.b + "px";
+    const tw = tip.offsetWidth;
+    tip.style.left = Math.min(Math.max(0, bx + (bx + 14 + tw > rect.width ? -14 - tw : 14)), rect.width - tw) + "px";
+    tip.style.top = "8px";
+  });
+  cv.addEventListener("mouseleave", () => { cross.style.display = tip.style.display = "none"; });
+}
+
+/* ---------- events ---------- */
+async function loadEvents() {
+  try {
+    const data = await (await fetch("api/events?limit=60")).json();
+    if (!data.events.length) return;
+    $("events").innerHTML = "<table>" + data.events.map(e => {
+      const when = new Date(e.ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      const label = e.kind === "down" ? "DOWN" : e.kind === "still_down" ? "STILL DOWN"
+        : e.kind === "up" ? "RECOVERED" : e.kind === "degraded" ? "DEGRADED" : "NORMAL";
+      return `<tr><td class="when">${when}</td>` +
+        `<td><span class="badge ${e.kind}">${e.layer} · ${label}</span>${e.message}</td></tr>`;
+    }).join("") + "</table>";
+  } catch (e) {}
+}
+
+/* ---------- boot ---------- */
+renderRanges();
+hookHover("latency", "cross1", "tip1", true);
+hookHover("losschart", "cross2", "tip2", false);
+loadStatus(); loadStats(); loadHistory(); loadEvents();
+setInterval(loadStatus, 15000);
+setInterval(() => { loadStats(); loadHistory(); loadEvents(); }, 60000);
+let rsz; window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setTimeout(drawCharts, 150); });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCharts);
+</script>
+</body>
+</html>

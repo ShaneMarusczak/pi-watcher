@@ -1,0 +1,23 @@
+[Unit]
+Description=pi-watcher network monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/pi-watcher --config /etc/pi-watcher/config.toml
+Restart=always
+RestartSec=5
+
+# Raw ICMP sockets without running as root.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+DynamicUser=yes
+StateDirectory=pi-watcher
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

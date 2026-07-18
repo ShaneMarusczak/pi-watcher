@@ -1,0 +1,27 @@
+# Build artifacts
+/target
+
+# NEVER commit a real deployment config. It contains your ntfy topic — which
+# acts as a password (anyone who has it can read your alerts and send fake
+# ones) — plus your network layout. Only config.example.toml belongs in git.
+config.toml
+*.local.toml
+
+# The database is a behavioral log of your household's connectivity —
+# outage times reveal occupancy patterns. Keep it off the internet.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Secrets and environment files, however they're named
+.env
+.env.*
+*.pem
+*.key
+secrets*
+
+# Tooling and OS noise
+.claude/
+.DS_Store

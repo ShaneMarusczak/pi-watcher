@@ -1,0 +1,113 @@
+# pi-watcher configuration
+#
+# Copy to /etc/pi-watcher/config.toml and set the addresses for YOUR network.
+# Never commit your real config to a public repo: the ntfy topic acts as a
+# password, and the addresses describe your home network.
+
+interval_secs = 30          # seconds between probe cycles
+db_path = "/var/lib/pi-watcher/watcher.db"
+fail_threshold = 3          # consecutive failed cycles before a target counts as down
+recover_threshold = 3       # consecutive good cycles before it counts as up again
+window_samples = 10         # rolling window for loss/latency (10 x 30s = 5 min)
+probe_timeout_secs = 3
+retention_days = 90         # raw samples older than this are pruned (events are kept)
+startup_message = true      # send a ntfy when the service starts
+
+[ntfy]
+url = "https://ntfy.sh"     # or your self-hosted ntfy server
+topic = ""                  # EDIT - e.g. "mynet-watch-x7q2v". Public namespace: pick something unguessable.
+# token = "tk_..."          # only for protected topics / self-hosted servers
+# click_url = "http://raspberrypi.local:8080"   # tapping a notification opens the status page
+
+[web]
+listen = "0.0.0.0:8080"     # status page: http://<pi>:8080  (LAN only - do not port-forward)
+
+# Degradation alerts (internet layer only): the link is "up" but hurting.
+[degraded]
+enabled = true
+loss_pct = 20.0             # % packet loss over the rolling window
+latency_ms = 250.0          # rolling median latency, ms
+cooldown_mins = 30          # minimum gap between degradation notifications
+
+# ---------------- dashboard tiles ----------------
+# Optional. Omitting [[tiles]] entirely gives the default row:
+# uptime 24h / 7d / 30d, outages 7d, downtime 7d.
+# Kinds (label is always optional; a sensible one is generated):
+#   uptime   - % of cycles the internet layer answered; add target = "name"
+#              for a single target's uptime instead. hours defaults to 24.
+#   outages  - internet outage count in the window. hours defaults to 168.
+#   downtime - total internet downtime in the window. hours defaults to 168.
+#   target   - live latency / DOWN state of one target, by name.
+#
+# [[tiles]]
+# kind = "uptime"
+# hours = 24
+#
+# [[tiles]]
+# kind = "target"
+# target = "nas"
+# label = "NAS"
+#
+# [[tiles]]
+# kind = "uptime"
+# target = "nas"
+# hours = 168
+
+# ---------------- the probe ladder ----------------
+# layer = "lan" | "gateway" | "internet" | "dns" | "host", checked in that
+# order. When a lower layer is down, alerts for the layers above it are
+# suppressed (still recorded in the database) because they're implied.
+# Every layer is optional - use the subset that matches your network.
+
+[[targets]]
+name = "router"
+layer = "lan"
+kind = "ping"
+addr = "192.168.1.1"        # EDIT - your router (`ip route`: the "default via" address)
+
+# The hop PAST your router - an ISP or cellular gateway. Common with 5G home
+# internet or any double-NAT setup. Find it: `traceroute -n 1.1.1.1`, hop 2.
+# Delete this block if your router connects straight to the internet.
+[[targets]]
+name = "wan-gateway"
+layer = "gateway"
+kind = "ping"
+addr = "192.168.12.1"       # EDIT
+
+[[targets]]
+name = "cloudflare"
+layer = "internet"
+kind = "ping"
+addr = "1.1.1.1"
+
+[[targets]]
+name = "google-dns"
+layer = "internet"
+kind = "ping"
+addr = "8.8.8.8"
+
+[[targets]]
+name = "dns"
+layer = "dns"
+kind = "dns"
+addr = "192.168.1.2:53"     # EDIT - your resolver (e.g. a Pi-hole); ":53" assumed if omitted
+query = "www.google.com"
+
+# ---------------- watched hosts ----------------
+# Any other machine you care about: layer = "host". It gets probed, charted,
+# and alerted on individually (down / recovered, with duration), but never
+# affects the internet verdict or the ladder. Alerts are suppressed only when
+# the LAN itself is down. Set alert = false to record history silently.
+#
+# [[targets]]
+# name = "nas"
+# layer = "host"
+# kind = "ping"
+# addr = "192.168.1.40"
+#
+# [[targets]]
+# name = "printer"
+# layer = "host"
+# kind = "ping"
+# addr = "192.168.1.41"
+# alert = false
