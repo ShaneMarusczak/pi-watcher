@@ -190,6 +190,7 @@ td.when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabula
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const SERIES_VARS = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
 
@@ -241,9 +242,9 @@ async function loadStatus() {
       ].filter(Boolean).join(" · ");
       const since = st !== "up" ? `<div class="meta">since ${fmtTime(l.since, rangeHours > 48)}</div>` : "";
       const tgts = l.targets.map(t =>
-        `<div class="tgt ${t.up ? "" : "bad"}"><span class="n">${t.name}</span>` +
+        `<div class="tgt ${t.up ? "" : "bad"}"><span class="n">${esc(t.name)}</span>` +
         `<span class="v">${t.up ? fmtMs(t.last_ms) : "down"}</span></div>`).join("");
-      return `<div class="card"><h3>${l.label}</h3>` +
+      return `<div class="card"><h3>${esc(l.label)}</h3>` +
         `<div class="state ${st}"><span class="dot"></span>${word}</div>` +
         `<div class="meta">${meta || "&nbsp;"}</div>${since}${tgts}</div>`;
     }).join("");
@@ -280,7 +281,7 @@ function renderTiles() {
   }).join("");
 }
 function tile(k, v, cls) {
-  return `<div class="tile"><div class="k">${k}</div><div class="v${cls ? " " + cls : ""}">${v}</div></div>`;
+  return `<div class="tile"><div class="k">${esc(k)}</div><div class="v${cls ? " " + cls : ""}">${v}</div></div>`;
 }
 
 /* ---------- history + charts ---------- */
@@ -300,7 +301,7 @@ function renderLegend() {
   for (const s of history.series) {
     const b = document.createElement("button");
     b.className = "lg" + (hidden.has(s.target) ? " off" : "");
-    b.innerHTML = `<span class="chip" style="background:${css(colorOf[s.target])}"></span>${s.target}`;
+    b.innerHTML = `<span class="chip" style="background:${css(colorOf[s.target])}"></span>${esc(s.target)}`;
     b.onclick = () => { hidden.has(s.target) ? hidden.delete(s.target) : hidden.add(s.target); renderLegend(); drawCharts(); };
     $("legend").appendChild(b);
   }
@@ -492,7 +493,7 @@ function hookHover(canvasId, crossId, tipId, isLatency) {
       if (!entries.length) { cross.style.display = tip.style.display = "none"; return; }
       entries.sort((a, b) => (b[1] ?? -1) - (a[1] ?? -1));
       rows = entries.map(([n, ms, loss]) =>
-        `<div class="row"><span class="l"><span class="chip" style="background:${css(colorOf[n])}"></span>${n}</span>` +
+        `<div class="row"><span class="l"><span class="chip" style="background:${css(colorOf[n])}"></span>${esc(n)}</span>` +
         `<span class="v">${ms == null ? "lost" : fmtMs(ms)}${loss > 0 ? " · " + loss.toFixed(0) + "%" : ""}</span></div>`).join("");
     } else {
       const p = lossGeom.pts.find(p => p[0] === bucket);
@@ -521,7 +522,7 @@ async function loadEvents() {
       const label = e.kind === "down" ? "DOWN" : e.kind === "still_down" ? "STILL DOWN"
         : e.kind === "up" ? "RECOVERED" : e.kind === "degraded" ? "DEGRADED" : "NORMAL";
       return `<tr><td class="when">${when}</td>` +
-        `<td><span class="badge ${e.kind}">${e.layer} · ${label}</span>${e.message}</td></tr>`;
+        `<td><span class="badge ${esc(e.kind)}">${esc(e.layer)} · ${label}</span>${esc(e.message)}</td></tr>`;
     }).join("") + "</table>";
   } catch (e) {}
 }
