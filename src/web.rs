@@ -77,7 +77,11 @@ struct HistoryQ {
 }
 
 async fn api_history(State(s): State<Arc<Shared>>, Query(q): Query<HistoryQ>) -> Json<Value> {
-    let hours = q.hours.unwrap_or(24.0).clamp(0.25, 24.0 * 90.0);
+    let hours = q
+        .hours
+        .filter(|h| h.is_finite())
+        .unwrap_or(24.0)
+        .clamp(0.25, 24.0 * 90.0);
     let from = unix_now().saturating_sub((hours * 3600.0) as u64);
     // ~240 points regardless of range, never finer than the probe interval.
     let bucket = ((hours * 3600.0 / 240.0) as u64)
