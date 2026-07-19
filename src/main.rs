@@ -1,4 +1,5 @@
 mod config;
+mod engine;
 mod monitor;
 mod notify;
 mod probes;
@@ -41,7 +42,17 @@ async fn main() -> anyhow::Result<()> {
     let notifier = notify::Notifier::new(cfg.ntfy.clone());
 
     let shared = Arc::new(web::Shared::new(web_store, &cfg));
-    tokio::spawn(web::serve(cfg.web.listen.clone(), shared.clone()));
+    let web_task = tokio::spawn(web::serve(cfg.web.listen.clone(), shared.clone()));
 
-    monitor::run(cfg, store, notifier, shared).await
+    // If the web server dies (port taken, listener error), fail the whole
+    // process so systemd restarts it, rather than monitoring on with a dead
+    // dashboard.
+    tokio::select! {
+        res = monitor::run(cfg, store, notifier, shared) => res,
+        res = web_task => match res {
+            Ok(Ok(())) => Err(anyhow::anyhow!("web server exited unexpectedly")),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(anyhow::anyhow!("web server task panicked: {e}")),
+        },
+    }
 }

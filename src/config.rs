@@ -1,10 +1,10 @@
-use crate::monitor::Layer;
+use crate::engine::Layer;
 use crate::probes::ProbeSpec;
 use anyhow::{bail, Context};
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "d_interval")]
@@ -37,7 +37,7 @@ pub struct Config {
 
 /// One tile on the dashboard. `uptime`/`outages`/`downtime` are computed from
 /// history; `target` shows the live state of one target by name.
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "lowercase")]
 pub enum Tile {
     Uptime {
@@ -75,6 +75,7 @@ fn d_week() -> u64 {
     168
 }
 
+#[rustfmt::skip]
 pub fn default_tiles() -> Vec<Tile> {
     vec![
         Tile::Uptime { hours: 24, label: None, target: None },
@@ -107,7 +108,7 @@ fn d_true() -> bool {
     true
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct NtfyConfig {
     #[serde(default = "d_ntfy_url")]
@@ -137,7 +138,7 @@ impl Default for NtfyConfig {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
     #[serde(default = "d_listen")]
@@ -156,7 +157,7 @@ impl Default for WebConfig {
 
 /// Degradation detection applies to the internet layer only: sustained packet
 /// loss or elevated rolling-median latency while the link is still nominally up.
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct DegradedConfig {
     #[serde(default = "d_true")]
@@ -190,14 +191,14 @@ impl Default for DegradedConfig {
     }
 }
 
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum TargetKind {
     Ping,
     Dns,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Target {
     pub name: String,
@@ -222,6 +223,12 @@ impl Target {
                         self.name, self.addr
                     )
                 })?;
+                if ip.is_ipv6() {
+                    bail!(
+                        "target '{}': IPv6 addresses are not supported (probes are IPv4-only)",
+                        self.name
+                    );
+                }
                 Ok(ProbeSpec::Ping(ip))
             }
             TargetKind::Dns => {
@@ -237,6 +244,12 @@ impl Target {
                         SocketAddr::new(ip, 53)
                     }
                 };
+                if sa.is_ipv6() {
+                    bail!(
+                        "target '{}': IPv6 addresses are not supported (probes are IPv4-only)",
+                        self.name
+                    );
+                }
                 let query = self
                     .query
                     .clone()
@@ -251,7 +264,13 @@ impl Config {
     pub fn load(path: &str) -> anyhow::Result<Config> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading config file {path}"))?;
-        let cfg: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;
+        Self::parse(&text).with_context(|| format!("parsing {path}"))
+    }
+
+    /// Upper bounds exist so that later arithmetic on these values
+    /// (hours * 3600, days * 86400, ...) can never overflow a u64.
+    pub fn parse(text: &str) -> anyhow::Result<Config> {
+        let cfg: Config = toml::from_str(text)?;
         if cfg.targets.is_empty() {
             bail!("config has no [[targets]]");
         }
@@ -262,14 +281,29 @@ impl Config {
             }
             t.probe_spec()?;
         }
-        if cfg.interval_secs < 5 {
-            bail!("interval_secs must be >= 5");
+        if !(5..=86400).contains(&cfg.interval_secs) {
+            bail!("interval_secs must be between 5 and 86400");
         }
-        if cfg.window_samples < 3 {
-            bail!("window_samples must be >= 3");
+        if !(3..=10_000).contains(&cfg.window_samples) {
+            bail!("window_samples must be between 3 and 10000");
         }
         if cfg.probe_timeout_secs == 0 || cfg.probe_timeout_secs >= cfg.interval_secs {
             bail!("probe_timeout_secs must be >= 1 and < interval_secs");
+        }
+        if cfg.fail_threshold == 0 || cfg.recover_threshold == 0 {
+            bail!("fail_threshold and recover_threshold must be >= 1");
+        }
+        if !(1..=3650).contains(&cfg.retention_days) {
+            bail!("retention_days must be between 1 and 3650");
+        }
+        if cfg.degraded.cooldown_mins > 525_600 {
+            bail!("degraded.cooldown_mins must be <= 525600 (one year)");
+        }
+        if !(cfg.degraded.loss_pct.is_finite() && cfg.degraded.loss_pct > 0.0) {
+            bail!("degraded.loss_pct must be a positive number");
+        }
+        if !(cfg.degraded.latency_ms.is_finite() && cfg.degraded.latency_ms > 0.0) {
+            bail!("degraded.latency_ms must be a positive number");
         }
         for tile in &cfg.tiles {
             let (hours, target) = match tile {
@@ -277,8 +311,8 @@ impl Config {
                 Tile::Outages { hours, .. } | Tile::Downtime { hours, .. } => (*hours, None),
                 Tile::Target { target, .. } => (1, Some(target)),
             };
-            if hours == 0 {
-                bail!("tile hours must be >= 1");
+            if !(1..=87_600).contains(&hours) {
+                bail!("tile hours must be between 1 and 87600 (10 years)");
             }
             if let Some(t) = target {
                 if !names.contains(t) {
@@ -287,5 +321,81 @@ impl Config {
             }
         }
         Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    const MINIMAL: &str = r#"
+[[targets]]
+name = "router"
+layer = "lan"
+kind = "ping"
+addr = "192.168.1.1"
+"#;
+
+    #[test]
+    fn example_config_stays_valid() {
+        Config::parse(include_str!("../config.example.toml")).unwrap();
+    }
+
+    #[test]
+    fn minimal_config_gets_defaults() {
+        let cfg = Config::parse(MINIMAL).unwrap();
+        assert_eq!(cfg.interval_secs, 30);
+        assert_eq!(cfg.fail_threshold, 3);
+        assert_eq!(cfg.tiles.len(), 5);
+    }
+
+    #[test]
+    fn ipv6_targets_rejected() {
+        let toml = r#"
+[[targets]]
+name = "cf"
+layer = "internet"
+kind = "ping"
+addr = "2606:4700:4700::1111"
+"#;
+        let err = Config::parse(toml).unwrap_err().to_string();
+        assert!(err.contains("IPv6"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn zero_thresholds_rejected() {
+        let err = Config::parse(&format!("fail_threshold = 0\n{MINIMAL}"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("fail_threshold"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn duplicate_target_names_rejected() {
+        let toml = format!(
+            "{MINIMAL}\n{}",
+            MINIMAL.replace("layer = \"lan\"", "layer = \"host\"")
+        );
+        let err = Config::parse(&toml).unwrap_err().to_string();
+        assert!(err.contains("duplicate"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn tile_with_unknown_target_rejected() {
+        let toml = format!("{MINIMAL}\n[[tiles]]\nkind = \"target\"\ntarget = \"nas\"\n");
+        let err = Config::parse(&toml).unwrap_err().to_string();
+        assert!(err.contains("unknown target"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn absurd_tile_hours_rejected() {
+        let toml = format!("{MINIMAL}\n[[tiles]]\nkind = \"uptime\"\nhours = 9000000\n");
+        assert!(Config::parse(&toml).is_err());
+    }
+
+    #[test]
+    fn zero_retention_rejected() {
+        assert!(Config::parse(&format!("retention_days = 0\n{MINIMAL}")).is_err());
     }
 }

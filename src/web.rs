@@ -1,6 +1,8 @@
 use crate::config::{Config, Tile};
-use crate::monitor::{unix_now, Layer, Snapshot};
+use crate::engine::{Layer, Snapshot};
+use crate::monitor::unix_now;
 use crate::store::Store;
+use anyhow::Context;
 use axum::extract::{Query, State};
 use axum::response::Html;
 use axum::routing::get;
@@ -16,6 +18,8 @@ pub struct Shared {
     pub targets: Vec<(String, Layer)>,
     pub tiles: Vec<Tile>,
     pub interval_secs: u64,
+    /// The dashboard can't chart further back than samples are retained.
+    pub max_history_hours: f64,
 }
 
 impl Shared {
@@ -30,6 +34,7 @@ impl Shared {
                 .collect(),
             tiles: cfg.tiles.clone(),
             interval_secs: cfg.interval_secs,
+            max_history_hours: (cfg.retention_days * 24) as f64,
         }
     }
 
@@ -42,7 +47,24 @@ impl Shared {
     }
 }
 
-pub async fn serve(listen: String, shared: Arc<Shared>) {
+/// SQLite work stays off the async workers: a multi-day GROUP BY on a Pi's
+/// SD card takes long enough to stall other requests. A poisoned lock is
+/// recovered rather than propagated - the queries can't corrupt the Store.
+async fn with_db<T, F>(s: &Arc<Shared>, f: F) -> anyhow::Result<T>
+where
+    F: FnOnce(&Store) -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let s = s.clone();
+    tokio::task::spawn_blocking(move || {
+        let db = s.db.lock().unwrap_or_else(|e| e.into_inner());
+        f(&db)
+    })
+    .await
+    .context("db task join")?
+}
+
+pub async fn serve(listen: String, shared: Arc<Shared>) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(index))
         .route("/api/status", get(api_status))
@@ -50,17 +72,12 @@ pub async fn serve(listen: String, shared: Arc<Shared>) {
         .route("/api/events", get(api_events))
         .route("/api/stats", get(api_stats))
         .with_state(shared);
-    let listener = match tokio::net::TcpListener::bind(&listen).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("[web] cannot bind {listen}: {e}");
-            std::process::exit(1);
-        }
-    };
+    let listener = tokio::net::TcpListener::bind(&listen)
+        .await
+        .with_context(|| format!("binding web listener on {listen}"))?;
     println!("[web] listening on http://{listen}");
-    if let Err(e) = axum::serve(listener, app).await {
-        eprintln!("[web] server error: {e}");
-    }
+    axum::serve(listener, app).await.context("web server")?;
+    Ok(())
 }
 
 async fn index() -> Html<&'static str> {
@@ -81,14 +98,14 @@ async fn api_history(State(s): State<Arc<Shared>>, Query(q): Query<HistoryQ>) ->
         .hours
         .filter(|h| h.is_finite())
         .unwrap_or(24.0)
-        .clamp(0.25, 24.0 * 90.0);
+        .clamp(0.25, s.max_history_hours.max(0.25));
     let from = unix_now().saturating_sub((hours * 3600.0) as u64);
     // ~240 points regardless of range, never finer than the probe interval.
     let bucket = ((hours * 3600.0 / 240.0) as u64)
         .max(s.interval_secs)
         .max(30);
 
-    let rows = match s.db.lock().unwrap().history(from, bucket) {
+    let rows = match with_db(&s, move |db| db.history(from, bucket)).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[web] history query failed: {e}");
@@ -126,7 +143,7 @@ struct EventsQ {
 
 async fn api_events(State(s): State<Arc<Shared>>, Query(q): Query<EventsQ>) -> Json<Value> {
     let limit = q.limit.unwrap_or(50).min(500);
-    let events = match s.db.lock().unwrap().events(limit) {
+    let events = match with_db(&s, move |db| db.events(limit)).await {
         Ok(evs) => evs
             .iter()
             .map(|e| {
@@ -159,12 +176,27 @@ fn window_label(hours: u64) -> String {
 /// only the spec; the page joins them with the live snapshot it already polls.
 async fn api_stats(State(s): State<Arc<Shared>>) -> Json<Value> {
     let now = unix_now();
-    let db = s.db.lock().unwrap();
-    let tiles: Vec<Value> = s
-        .tiles
+    let shared = s.clone();
+    let tiles = with_db(&s, move |db| Ok(build_tiles(&shared, db, now))).await;
+    let tiles = match tiles {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[web] stats query failed: {e}");
+            Vec::new()
+        }
+    };
+    Json(json!({ "tiles": tiles }))
+}
+
+fn build_tiles(s: &Shared, db: &Store, now: u64) -> Vec<Value> {
+    s.tiles
         .iter()
         .map(|tile| match tile {
-            Tile::Uptime { hours, label, target } => {
+            Tile::Uptime {
+                hours,
+                label,
+                target,
+            } => {
                 let names = match target {
                     Some(t) => vec![t.clone()],
                     None => s.internet_targets(),
@@ -203,6 +235,5 @@ async fn api_stats(State(s): State<Arc<Shared>>) -> Json<Value> {
                 json!({ "kind": "target", "label": label, "target": target })
             }
         })
-        .collect();
-    Json(json!({ "tiles": tiles }))
+        .collect()
 }
