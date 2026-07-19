@@ -141,10 +141,12 @@ async fn dns_query(server: SocketAddr, name: &str, timeout: Duration) -> Result<
         if from.ip() != server.ip() || n < 12 || buf[0..2] != id.to_be_bytes() {
             continue;
         }
-        let ms = start.elapsed().as_secs_f64() * 1000.0;
         if buf[2] & 0x80 == 0 {
-            return Err("not a response".into());
+            // QR=0: something echoed our query back. Keep waiting for the
+            // real answer like any other stray datagram.
+            continue;
         }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
         let rcode = buf[3] & 0x0f;
         if rcode != 0 {
             return Err(format!("dns rcode {rcode}"));
