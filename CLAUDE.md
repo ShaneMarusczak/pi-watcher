@@ -27,7 +27,8 @@ A single binary: probe a ladder of network targets on a fixed interval,
 attribute failures to the right layer, record everything in SQLite, alert
 via ntfy, and serve a dashboard.
 
-- **`engine.rs`** — the whole monitoring judgement, pure and synchronous:
+- **`engine.rs`** — the whole monitoring judgement, synchronous and free of
+  network/storage I/O:
   per-target hysteresis windows, layer status in rank order
   (lan → gateway → internet → dns, plus per-target `host`), alert
   suppression when a lower layer is down, catch-up `still_down` alerts when

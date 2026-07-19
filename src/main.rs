@@ -9,7 +9,7 @@ mod web;
 use std::sync::Arc;
 
 fn usage() -> ! {
-    eprintln!("usage: pi-watcher [--config <path>]   (default: ./config.toml)");
+    eprintln!("usage: pi-watcher [--config <path> | <path>]   (default: ./config.toml)");
     std::process::exit(2);
 }
 

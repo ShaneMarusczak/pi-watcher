@@ -22,7 +22,8 @@ pub struct EventRow {
 }
 
 /// Last observed state of one target, for rehydration after a restart.
-pub struct TargetResume {
+/// The raw per-target row; `engine::ResumeState` is the composed picture.
+pub struct ResumeTargetRow {
     pub up: bool,
     /// Start of the trailing failure streak (None if it never succeeded).
     pub down_since: Option<u64>,
@@ -221,7 +222,7 @@ impl Store {
 
     /// Last observed state of `name` from its samples, plus (for host targets)
     /// whether the current down streak was notified, from its last event.
-    pub fn target_resume(&self, name: &str) -> anyhow::Result<Option<TargetResume>> {
+    pub fn target_resume(&self, name: &str) -> anyhow::Result<Option<ResumeTargetRow>> {
         let last_ok: Option<i64> = self
             .conn
             .query_row(
@@ -234,7 +235,7 @@ impl Store {
             return Ok(None); // never sampled
         };
         if last_ok != 0 {
-            return Ok(Some(TargetResume {
+            return Ok(Some(ResumeTargetRow {
                 up: true,
                 down_since: None,
                 notified: false,
@@ -261,7 +262,7 @@ impl Store {
             )
             .optional()?
             .unwrap_or(false);
-        Ok(Some(TargetResume {
+        Ok(Some(ResumeTargetRow {
             up: false,
             down_since: down_since.map(|t| t as u64),
             notified,

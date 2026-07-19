@@ -56,7 +56,7 @@ fn load_resume(store: &Store, cfg: &Config, now: u64) -> anyhow::Result<Option<R
     }
 
     let mut layers = HashMap::new();
-    for layer in [Layer::Lan, Layer::Gateway, Layer::Internet, Layer::Dns] {
+    for layer in Layer::LADDER {
         if !cfg.targets.iter().any(|t| t.layer == layer) {
             continue;
         }

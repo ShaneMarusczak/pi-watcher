@@ -1,7 +1,9 @@
 //! The per-cycle evaluation engine: all monitoring state and alert logic,
-//! no I/O. `monitor::run` feeds it probe results once per cycle; it returns
-//! the events to record and notify. Keeping it pure makes the suppression /
-//! catch-up / hysteresis rules testable without a network or a database.
+//! free of network and storage I/O (it logs target flips, nothing more).
+//! `monitor::run` feeds it probe results once per cycle; it returns the
+//! events to record and notify. Keeping it self-contained makes the
+//! suppression / catch-up / hysteresis rules testable without a network
+//! or a database.
 
 use crate::config::Config;
 use crate::probes::ProbeResult;
@@ -32,6 +34,10 @@ impl Layer {
         Layer::Dns,
         Layer::Host,
     ];
+
+    /// The dependency ladder in rank order - every layer with layer-level
+    /// alerting. `Host` is deliberately absent: its targets alert per host.
+    pub const LADDER: [Layer; 4] = [Layer::Lan, Layer::Gateway, Layer::Internet, Layer::Dns];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -530,11 +536,9 @@ impl Engine {
         // alerted (suppressed as implied). If the lower layer has recovered
         // but this one is still down, that outage now stands on its own -
         // send the overdue alert. Uses kind "still_down" so outage counts
-        // (which tally "down" events) aren't inflated.
-        for layer in Layer::ALL {
-            if layer == Layer::Host {
-                continue; // host targets get per-target treatment below
-            }
+        // (which tally "down" events) aren't inflated. Host targets get
+        // per-target treatment below, so this walks the ladder only.
+        for layer in Layer::LADDER {
             let Some(ls) = self.layers.get_mut(&layer) else {
                 continue;
             };
