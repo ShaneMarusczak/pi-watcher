@@ -35,15 +35,33 @@ impl Notifier {
     }
 }
 
+enum DeliverError {
+    /// Transport problems and server-side hiccups: worth retrying, the whole
+    /// point of the queue.
+    Retry(String),
+    /// The server understood us and said no (bad token, missing topic, ...).
+    /// Retrying would block the queue forever behind a message that can
+    /// never be delivered.
+    Permanent(String),
+}
+
 async fn worker(cfg: NtfyConfig, mut rx: mpsc::UnboundedReceiver<Msg>) {
-    let enabled = !cfg.topic.is_empty();
-    if !enabled {
-        println!("[ntfy] no topic configured - notifications will be logged only");
-    }
-    let http = reqwest::Client::builder()
+    // Client construction failing (broken TLS backend) must not kill the
+    // worker silently: fall back to log-only delivery.
+    let http = match reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
-        .expect("building http client");
+    {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!("[ntfy] cannot create HTTP client ({e}) - notifications will be logged only");
+            None
+        }
+    };
+    let enabled = !cfg.topic.is_empty() && http.is_some();
+    if http.is_some() && cfg.topic.is_empty() {
+        println!("[ntfy] no topic configured - notifications will be logged only");
+    }
     let url = format!("{}/{}", cfg.url.trim_end_matches('/'), cfg.topic);
     let mut queue: VecDeque<Msg> = VecDeque::new();
 
@@ -62,17 +80,24 @@ async fn worker(cfg: NtfyConfig, mut rx: mpsc::UnboundedReceiver<Msg>) {
         }
 
         while let Some(m) = queue.front() {
-            if !enabled {
+            let (true, Some(http)) = (enabled, &http) else {
                 println!("[ntfy skipped] {}: {}", m.title, m.body);
                 queue.pop_front();
                 continue;
-            }
-            match deliver(&http, &cfg, &url, m).await {
+            };
+            match deliver(http, &cfg, &url, m).await {
                 Ok(()) => {
                     println!("[ntfy] sent: {}", m.title);
                     queue.pop_front();
                 }
-                Err(e) => {
+                Err(DeliverError::Permanent(e)) => {
+                    eprintln!(
+                        "[ntfy] DROPPING message '{}' ({e}) - check the ntfy url/topic/token",
+                        m.title
+                    );
+                    queue.pop_front();
+                }
+                Err(DeliverError::Retry(e)) => {
                     eprintln!(
                         "[ntfy] delivery failed ({e}); {} message(s) queued, retrying in {RETRY_SECS}s",
                         queue.len()
@@ -99,7 +124,7 @@ async fn deliver(
     cfg: &NtfyConfig,
     url: &str,
     m: &Msg,
-) -> Result<(), String> {
+) -> Result<(), DeliverError> {
     let mut req = http
         .post(url)
         .header("Title", m.title.clone())
@@ -112,9 +137,18 @@ async fn deliver(
     if let Some(click) = &cfg.click_url {
         req = req.header("Click", click.clone());
     }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("ntfy returned {}", resp.status()));
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| DeliverError::Retry(e.to_string()))?;
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
     }
-    Ok(())
+    let msg = format!("ntfy returned {status}");
+    if status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408 {
+        Err(DeliverError::Retry(msg))
+    } else {
+        Err(DeliverError::Permanent(msg))
+    }
 }
