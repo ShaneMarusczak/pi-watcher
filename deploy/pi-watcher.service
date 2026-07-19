@@ -1,7 +1,10 @@
 [Unit]
 Description=pi-watcher network monitor
-After=network-online.target
-Wants=network-online.target
+# time-sync.target matters on RTC-less boards (every Raspberry Pi): starting
+# before NTP sync stamps samples and durations with a bogus clock. For it to
+# actually wait, enable the sync unit once:  sudo systemctl enable systemd-time-wait-sync
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
 
 [Service]
 ExecStart=/usr/local/bin/pi-watcher --config /etc/pi-watcher/config.toml

@@ -16,6 +16,12 @@ threshold, alert, and dashboard tile is driven by one TOML config.
 - **ntfy notifications** — outage, recovery (with duration), and degradation
   alerts to your phone via [ntfy](https://ntfy.sh). Undeliverable messages are
   queued and retried, so the alert about an outage survives the outage itself.
+- **Restart-proof state** — on startup the watcher rehydrates target and
+  layer state from the database, so a crash or redeploy mid-outage doesn't
+  double-count the outage, lose its duration, or skip the recovery alert.
+  (Notifications queued in memory but not yet delivered don't survive a
+  restart; the catch-up logic re-alerts for anything still down and
+  unannounced.)
 - **Self-contained web dashboard** — live status, uptime/outage tiles,
   latency and loss charts (6h–30d), event log. No CDN dependencies, so it
   works while the internet is down.
@@ -57,6 +63,8 @@ never raises a false alarm.
 
 ## Quick start
 
+Needs Rust 1.87 or newer.
+
 ```sh
 cargo build --release          # on the Pi, or cross-compile (see below)
 sudo mkdir -p /etc/pi-watcher
@@ -71,7 +79,10 @@ Subscribe to your topic in the ntfy app; within a cycle you'll get a startup
 message proving the alert path works, and the dashboard is on port 8080.
 
 The systemd unit runs unprivileged (`DynamicUser`) with `CAP_NET_RAW` for
-ICMP, and keeps the database in `/var/lib/pi-watcher/`.
+ICMP, and keeps the database in `/var/lib/pi-watcher/`. It also waits for
+`time-sync.target`: Pis have no hardware clock, and samples stamped before
+NTP sync would land in history with a bogus timestamp. Run
+`sudo systemctl enable systemd-time-wait-sync` once to make that wait real.
 
 **Cross-compiling** from a desktop with
 [cross](https://github.com/cross-rs/cross):
@@ -93,7 +104,9 @@ Everything lives in one TOML file — [config.example.toml](config.example.toml)
 documents every key and ships with placeholder addresses. Highlights:
 
 - **Targets**: any number, each `ping` (ICMP) or `dns` (a real A-record query
-  against a specific server), assigned to a layer.
+  against a specific server), assigned to a layer. Addresses must be IPv4 —
+  the probes are IPv4-only, and the config loader rejects IPv6 rather than
+  letting a target fail silently forever.
 - **Tuning**: probe interval, failure/recovery hysteresis, rolling-window
   size, degradation thresholds and cooldown, retention.
 - **Tiles**: the dashboard's stat row is built from `[[tiles]]` entries —

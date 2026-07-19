@@ -58,6 +58,7 @@ cooldown_mins = 30          # minimum gap between degradation notifications
 # order. When a lower layer is down, alerts for the layers above it are
 # suppressed (still recorded in the database) because they're implied.
 # Every layer is optional - use the subset that matches your network.
+# Addresses must be IPv4 (the probes are IPv4-only).
 
 [[targets]]
 name = "router"
